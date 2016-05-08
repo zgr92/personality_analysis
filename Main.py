@@ -12,6 +12,7 @@ import numpy as np
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn import cross_validation
 from sklearn.metrics import classification_report
+from sklearn import preprocessing
 import itertools
 import time
 from datetime import datetime
@@ -24,6 +25,9 @@ WORD_BASED_FEATURES = 2
 SENTENCE_BASED_FEATURES = 3
 DICTIONARY_BASED_FEATURES = 4
 UNIGRAMS_FEATURES = 5
+SYNTACTIC_FEATURES = 6
+
+MULTI_LABELED = 0
 
 
 punctuationArray = ['.', ',', '?', '-', '!', "\"", "("]
@@ -33,10 +37,12 @@ timestamp = int(time.time())
 output_path = 'svm_all_combinations' + str(timestamp) + '.txt'
 
 def main():
-    modes = [POS_FEATURES, CHARACTER_BASED_FEATURES, UNIGRAMS_FEATURES, WORD_BASED_FEATURES, SENTENCE_BASED_FEATURES]
-    labels = read_labels('D:\Zgr\Dropbox\Praca\PWr\mgr\dane\Youtube personality merge.csv', ['Xc', 'Ac', 'Cc', 'Ec', 'Oc'])
-
-    labels = np.array(labels)
+    modes = [POS_FEATURES, CHARACTER_BASED_FEATURES, UNIGRAMS_FEATURES, WORD_BASED_FEATURES, SENTENCE_BASED_FEATURES, DICTIONARY_BASED_FEATURES]
+    if MULTI_LABELED:
+        labels = read_labels_multi('D:\Zgr\Dropbox\Praca\PWr\mgr\dane\Youtube personality merge.csv', ['Xc', 'Ac', 'Cc', 'Ec', 'Oc'])
+    else:
+        labels = read_labels('D:\Zgr\Dropbox\Praca\PWr\mgr\dane\Youtube personality merge.csv', ['Xc', 'Ac', 'Cc', 'Ec', 'Oc'])
+    print labels
     # correlation matrix
     # R = np.corrcoef(x=labels, rowvar=0)
     # pcolor(R)
@@ -46,6 +52,11 @@ def main():
     # show()
 
     data = read_data('D:\Zgr\Dropbox\Praca\PWr\mgr\dane\youtube-personality\\')
+    positive_dictionary_raw = unicode(open('D:\Zgr\Dropbox\Praca\PWr\mgr\dane\opinion-lexicon-English\positive-words.txt').read(), "utf-8", errors='ignore')
+    negative_dictionary_raw = unicode(open('D:\Zgr\Dropbox\Praca\PWr\mgr\dane\opinion-lexicon-English\\negative-words.txt').read(), "utf-8", errors='ignore')
+
+    positive_dictionary = positive_dictionary_raw.split()
+    negative_dictionary = negative_dictionary_raw.split()
 
     print "read " + datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     result = ''
@@ -84,7 +95,7 @@ def main():
             words_count = sum(words)
             sentence_features_vector.append(words_count/sentences_number)
             rowVectors[modes.index(SENTENCE_BASED_FEATURES)] = sentence_features_vector
-        if any(x in [UNIGRAMS_FEATURES, CHARACTER_BASED_FEATURES] for x in modes):
+        if any(x in [UNIGRAMS_FEATURES, CHARACTER_BASED_FEATURES, DICTIONARY_BASED_FEATURES] for x in modes):
             if UNIGRAMS_FEATURES in modes:
                 unigramsVector = [0] * len(tokensList)
             if CHARACTER_BASED_FEATURES in modes:
@@ -96,6 +107,9 @@ def main():
                 else:
                     uppercase_count = 0
                 character_features_vector.append(uppercase_count)
+            if DICTIONARY_BASED_FEATURES in modes:
+                positiveCount = 0
+                negativeCount = 0
             for token in doc:
                 if UNIGRAMS_FEATURES in modes:
                     if not token.is_stop:
@@ -110,11 +124,24 @@ def main():
                 if CHARACTER_BASED_FEATURES in modes:
                     if token.pos == pos.PUNCT and token.orth_ in punctuationArray:
                         punctuationVector[punctuationArray.index(token.orth_)] += 1
+                if DICTIONARY_BASED_FEATURES in modes:
+                    tokenString = token.orth_.lower()
+                    if tokenString in positive_dictionary:
+                        positiveCount += 1
+                    if tokenString in negative_dictionary:
+                        negativeCount += 1
             if CHARACTER_BASED_FEATURES in modes:
                 character_features_vector += punctuationVector
                 characters_count = len(doc.string) - doc.string.count(' ')
                 character_features_vector.append(characters_count)
                 rowVectors[modes.index(CHARACTER_BASED_FEATURES)] = character_features_vector
+            if DICTIONARY_BASED_FEATURES in modes:
+                words = doc.count_by(attrs.ORTH, exclude=lambda x: x.is_punct).values()
+                words_count = sum(words)
+                rowVectors[modes.index(DICTIONARY_BASED_FEATURES)] = [int(positiveCount*1.0/words_count*100), int(negativeCount*1.0/words_count*100)]
+        # if SYNTACTIC_FEATURES in modes:
+            # for sentence in doc.sents:
+            #     print sentence
         if UNIGRAMS_FEATURES in modes:
             rowVectors[modes.index(UNIGRAMS_FEATURES)] = unigramsVector
         vectors_by_mode.append(rowVectors)
@@ -124,25 +151,32 @@ def main():
         for vector in vectors_by_mode:
             vector[modes.index(UNIGRAMS_FEATURES)] += [0] * (vector_size - len(vector[modes.index(UNIGRAMS_FEATURES)]))
     for L in range(0, len(modes) + 1):
-        for current_modes in itertools.combinations(modes, L):
+        for current_modes in [modes]: #itertools.combinations(modes, L):
             if current_modes:
                 # join current modes in one new features vector
                 current_vectors = []
                 for row in vectors_by_mode:
                     current_row = []
                     for mode in current_modes:
-                        current_row += row[modes.index(mode)]
+                        mode_features = row[modes.index(mode)]
+                        if type(mode_features) is list:
+                            current_row += mode_features
+                        else:
+                            current_row.append(mode_features)
                     current_vectors.append(current_row)
                 print "vector length: " + str(len(current_vectors[0]))
                 current_vectors = np.array(current_vectors)
                 print current_modes
                 print 'learning ' + datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                clf = OneVsRestClassifier(svm.SVC(kernel='linear')).fit(current_vectors, labels)
+                if MULTI_LABELED:
+                    clf = OneVsRestClassifier(svm.SVC(kernel='linear')).fit(current_vectors, labels)
+                else:
+                    clf = svm.SVC(kernel='rbf').fit(current_vectors, labels)
                 print 'classification ' + datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 predicted = cross_validation.cross_val_predict(clf, current_vectors, labels, cv=5)
                 print 'scores ' + datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 result = ','.join(str(v) for v in current_modes) + '\n'
-                result += classification_report(labels, predicted, target_names=['Extraversion', 'Agreeableness', 'Conscientiousness', 'Emotional Stability', 'Openness to Experience'])
+                result += classification_report(labels, predicted)
                 result += '\n'
                 print result
                 results_file = open(output_path, 'ab')
@@ -154,7 +188,7 @@ def find_ngrams(input_list, n):
     return zip(*[input_list[i:] for i in range(n)])
 
 
-def read_labels(labels_path, labels_names):
+def read_labels_multi(labels_path, labels_names):
     labels = []
     with open(labels_path) as csvfile:
         reader = csv.DictReader(csvfile)
@@ -163,7 +197,18 @@ def read_labels(labels_path, labels_names):
             for label_name in labels_names:
                 row_labels.append(int(row[label_name]))
             labels.append(row_labels)
-    return labels
+    return np.array(labels)
+
+def read_labels(labels_path, labels_names):
+    labels = []
+    with open(labels_path) as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            row_labels = []
+            for label_name in labels_names:
+                row_labels.append(str(row[label_name]))
+            labels.append("".join(row_labels))
+    return np.array(labels)
 
 
 def read_data(data_path):
