@@ -26,9 +26,9 @@ SENTENCE_BASED_FEATURES = 3
 DICTIONARY_BASED_FEATURES = 4
 UNIGRAMS_FEATURES = 5
 SYNTACTIC_FEATURES = 6
+BIGRAMS_FEATURES = 7
 
-MULTI_LABELED = 0
-
+MULTI_LABELED = 1
 
 punctuationArray = ['.', ',', '?', '-', '!', "\"", "("]
 stopWords = [u'the', u'a', u'.', u',', u'?']
@@ -37,12 +37,11 @@ timestamp = int(time.time())
 output_path = 'svm_all_combinations' + str(timestamp) + '.txt'
 
 def main():
-    modes = [POS_FEATURES, CHARACTER_BASED_FEATURES, UNIGRAMS_FEATURES, WORD_BASED_FEATURES, SENTENCE_BASED_FEATURES, DICTIONARY_BASED_FEATURES]
+    modes = [POS_FEATURES, CHARACTER_BASED_FEATURES, UNIGRAMS_FEATURES, WORD_BASED_FEATURES, SENTENCE_BASED_FEATURES, DICTIONARY_BASED_FEATURES, BIGRAMS_FEATURES]
     if MULTI_LABELED:
         labels = read_labels_multi('D:\Zgr\Dropbox\Praca\PWr\mgr\dane\Youtube personality merge.csv', ['Xc', 'Ac', 'Cc', 'Ec', 'Oc'])
     else:
         labels = read_labels('D:\Zgr\Dropbox\Praca\PWr\mgr\dane\Youtube personality merge.csv', ['Xc', 'Ac', 'Cc', 'Ec', 'Oc'])
-    print labels
     # correlation matrix
     # R = np.corrcoef(x=labels, rowvar=0)
     # pcolor(R)
@@ -63,6 +62,8 @@ def main():
 
     nlp = load('en')
     tokensList = []
+    biTokensList = []
+    newBiTokenString = ''
     vectors_by_mode = []
     for doc in nlp.pipe(data.itervalues(), batch_size=100, n_threads=4):
         rowVectors = [0] * len(modes)
@@ -95,9 +96,11 @@ def main():
             words_count = sum(words)
             sentence_features_vector.append(words_count/sentences_number)
             rowVectors[modes.index(SENTENCE_BASED_FEATURES)] = sentence_features_vector
-        if any(x in [UNIGRAMS_FEATURES, CHARACTER_BASED_FEATURES, DICTIONARY_BASED_FEATURES] for x in modes):
+        if any(x in [UNIGRAMS_FEATURES, BIGRAMS_FEATURES, CHARACTER_BASED_FEATURES, DICTIONARY_BASED_FEATURES] for x in modes):
             if UNIGRAMS_FEATURES in modes:
                 unigramsVector = [0] * len(tokensList)
+            if BIGRAMS_FEATURES in modes:
+                bigramsVector = [0] * len(tokensList)
             if CHARACTER_BASED_FEATURES in modes:
                 character_features_vector = []
                 punctuationVector = [0] * len(punctuationArray)
@@ -121,6 +124,19 @@ def main():
                             unigramsVector[index] = unigramsVector[index]+1
                         else:
                             unigramsVector.append(1)
+                if BIGRAMS_FEATURES in modes:
+                    if not token.is_stop:
+                        previousBiTokenString = newBiTokenString
+                        newBiTokenString = token.orth_.lower()
+                        if previousBiTokenString != '':
+                            currentBiTokenString = previousBiTokenString + " " + newBiTokenString
+                            if currentBiTokenString not in biTokensList:
+                                biTokensList.append(currentBiTokenString)
+                            index = biTokensList.index(currentBiTokenString)
+                            if len(bigramsVector) > index:
+                                bigramsVector[index] = bigramsVector[index] + 1
+                            else:
+                                bigramsVector.append(1)
                 if CHARACTER_BASED_FEATURES in modes:
                     if token.pos == pos.PUNCT and token.orth_ in punctuationArray:
                         punctuationVector[punctuationArray.index(token.orth_)] += 1
@@ -144,14 +160,21 @@ def main():
             #     print sentence
         if UNIGRAMS_FEATURES in modes:
             rowVectors[modes.index(UNIGRAMS_FEATURES)] = unigramsVector
+        if BIGRAMS_FEATURES in modes:
+            rowVectors[modes.index(BIGRAMS_FEATURES)] = bigramsVector
         vectors_by_mode.append(rowVectors)
 
     if UNIGRAMS_FEATURES in modes:
         vector_size = len(vectors_by_mode[-1][modes.index(UNIGRAMS_FEATURES)])
         for vector in vectors_by_mode:
             vector[modes.index(UNIGRAMS_FEATURES)] += [0] * (vector_size - len(vector[modes.index(UNIGRAMS_FEATURES)]))
+    if BIGRAMS_FEATURES in modes:
+        vector_size = len(vectors_by_mode[-1][modes.index(BIGRAMS_FEATURES)])
+        for vector in vectors_by_mode:
+            vector[modes.index(BIGRAMS_FEATURES)] += [0] * (vector_size - len(vector[modes.index(BIGRAMS_FEATURES)]))
+    print biTokensList
     for L in range(0, len(modes) + 1):
-        for current_modes in [modes]: #itertools.combinations(modes, L):
+        for current_modes in itertools.combinations(modes, L):
             if current_modes:
                 # join current modes in one new features vector
                 current_vectors = []
